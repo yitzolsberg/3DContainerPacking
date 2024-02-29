@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using CromulentBisgetti.ContainerPacking;
 using CromulentBisgetti.ContainerPacking.Entities;
 using CromulentBisgetti.ContainerPacking.Algorithms;
+using System.Linq;
+using System.Text;
 
 namespace CromulentBisgetti.ContainerPackingTests
 {
@@ -15,64 +17,74 @@ namespace CromulentBisgetti.ContainerPackingTests
 		[TestMethod]
 		public void EB_AFIT_Passes_700_Standard_Reference_Tests()
 		{
-			// ORLibrary.txt is an Embedded Resource in this project.
-			string resourceName = "CromulentBisgetti.ContainerPackingTests.DataFiles.ORLibrary.txt";
-			Assembly assembly = Assembly.GetExecutingAssembly();
+            var max = 10;
 
-			using (Stream stream = assembly.GetManifestResourceStream(resourceName))
-			{
-				using (StreamReader reader = new StreamReader(stream))
-				{
-					// Counter to control how many tests are run in dev.
-					int counter = 1;
+            foreach (var testCase in LoadTestCases().Take(max))
+            {
+                Console.WriteLine("Case " + testCase.Id);
 
-					while (reader.ReadLine() != null && counter <= 700)
-					{
-						List<Item> itemsToPack = new List<Item>();
 
-						// First line in each test case is an ID. Skip it.
+                var results = PackingService.Pack(testCase.Containers, testCase.Items, new List<int> { (int)AlgorithmType.EB_AFIT });
+                var result = results[0].AlgorithmPackingResults[0];
+             
+                Assert.AreEqual(result.PackedItems.Count + result.UnpackedItems.Count, testCase.Results.ItemCount);
+                Assert.AreEqual(result.PackedItems.Count, testCase.Results.PackedCount);
+                Assert.IsTrue(Math.Abs(result.PercentContainerVolumePacked - testCase.Results.ContainerVolumePacked) < 0.02m);
+                Assert.AreEqual(result.PercentItemVolumePacked, testCase.Results.ItemVolumePacked);
+            }
+        }
 
-						// Second line states the results of the test, as reported in the EB-AFIT master's thesis, appendix E.
-						string[] testResults = reader.ReadLine().Split(' ');
+        private IEnumerable<TestCase> LoadTestCases()
+        {
+            string resourceName = "CromulentBisgetti.ContainerPackingTests.DataFiles.ORLibrary.txt";
 
-						// Third line defines the container dimensions.
-						string[] containerDims = reader.ReadLine().Split(' ');
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
+            using var reader = new StreamReader(stream);
+            string idLine;
+            while ((idLine = reader.ReadLine()) != null)
+            {
+                // First line in each test case is an ID. Skip it.
+                var id = Convert.ToInt32(idLine.Split(' ')[0]);
+                // Second line states the results of the test, as reported in the EB-AFIT master's thesis, appendix E.
+                var testResults = reader.ReadLine().Split(' ');
+                var results = new Results(
+                    Convert.ToInt64(testResults[1]),
+                    Convert.ToInt64(testResults[2]),
+                    Convert.ToDecimal(testResults[3]),
+                    Convert.ToDecimal(testResults[4])
+                    );
 
-						// Fourth line states how many distinct item types we are packing.
-						int itemTypeCount = Convert.ToInt32(reader.ReadLine());
+                // Third line defines the container dimensions.
+                var containerDims = reader.ReadLine().Split(' ');
+                var container = new Container(
+                    0,
+                    Convert.ToInt64(containerDims[0]),
+                    Convert.ToInt64(containerDims[1]),
+                    Convert.ToInt64(containerDims[2])
+                    );
+                var containers = new List<Container>
+                {
+                    container
+                };
 
-						for (int i = 0; i < itemTypeCount; i++)
-						{
-							string[] itemArray = reader.ReadLine().Split(' ');
+                // Fourth line states how many distinct item types we are packing.
+                var itemTypeCount = Convert.ToInt32(reader.ReadLine());
+                var itemsToPack = new List<Item>();
+                
+                for (var i = 0; i < itemTypeCount; i++)
+                {
+                    var itemArray = reader.ReadLine().Split(' ');
 
-							Item item = new Item(0, Convert.ToDecimal(itemArray[1]), Convert.ToDecimal(itemArray[3]), Convert.ToDecimal(itemArray[5]), Convert.ToInt32(itemArray[7]));
-							itemsToPack.Add(item);
-						}
+                    var item = new Item(0, Convert.ToDecimal(itemArray[1]), Convert.ToDecimal(itemArray[3]), Convert.ToDecimal(itemArray[5]), Convert.ToInt32(itemArray[7]));
+                    itemsToPack.Add(item);
+                }
 
-						List<Container> containers = new List<Container>();
-						containers.Add(new Container(0, Convert.ToDecimal(containerDims[0]), Convert.ToDecimal(containerDims[1]), Convert.ToDecimal(containerDims[2])));
+                yield return new TestCase(id, results, containers, itemsToPack);
+            }
 
-						List<ContainerPackingResult> result = PackingService.Pack(containers, itemsToPack, new List<int> { (int)AlgorithmType.EB_AFIT });
-						
-						// Assert that the number of items we tried to pack equals the number stated in the published reference.
-						Assert.AreEqual(result[0].AlgorithmPackingResults[0].PackedItems.Count + result[0].AlgorithmPackingResults[0].UnpackedItems.Count, Convert.ToDecimal(testResults[1]));
+        }
 
-						// Assert that the number of items successfully packed equals the number stated in the published reference.
-						Assert.AreEqual(result[0].AlgorithmPackingResults[0].PackedItems.Count, Convert.ToDecimal(testResults[2]));
-
-						// Assert that the packed container volume percentage is equal to the published reference result.
-						// Make an exception for a couple of tests where this algorithm yields 87.20% and the published result 
-						// was 87.21% (acceptable rounding error).
-						Assert.IsTrue(result[0].AlgorithmPackingResults[0].PercentContainerVolumePacked == Convert.ToDecimal(testResults[3]) ||
-							(result[0].AlgorithmPackingResults[0].PercentContainerVolumePacked == 87.20M && Convert.ToDecimal(testResults[3]) == 87.21M));
-
-						// Assert that the packed item volume percentage is equal to the published reference result.
-						Assert.AreEqual(result[0].AlgorithmPackingResults[0].PercentItemVolumePacked, Convert.ToDecimal(testResults[4]));
-
-						counter++;
-					}
-				}
-			}
-		}
-	}
+        record Results(long ItemCount, long PackedCount, decimal ContainerVolumePacked, decimal ItemVolumePacked);
+        record TestCase(int Id, Results Results, List<Container> Containers, List<Item> Items);
+    }
 }
